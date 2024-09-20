@@ -31,8 +31,9 @@ def main():
     lats = []
     longs = []
     kf = GPSKalmanFilter.GpsKF(zlat[0], zlong[0],.22)
-    for lat, long in zip(zlat, zlong):
-        kf.predict()
+    prevTime = t[0]
+    for ts, lat, long in zip(t, zlat, zlong):
+        kf.predict(ts-prevTime)
         z=np.array([[lat,long]])
         kf.update(z)
         lats.append(kf.x[0])

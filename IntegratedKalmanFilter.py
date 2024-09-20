@@ -16,22 +16,26 @@ import numpy as np
 class GpsKF:
     startTime = 0
     def __init__(self, startLat:float, startLong:float, dt:float):
-        # State is p (observed), p' (hidden), p'' (hidden)
-        self.x = np.array([startLat, startLong, 0.0, 0.0])
+        # State is latitude (hidden), longitude (hidden), yaw(hidden),
+        # x' (observed), y'(observed), yaw'(observed),
+        # x''(hidden), y''(hidden), yaw''(hidden)
+        self.x = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         # Initial covariance
-        self.P = np.diag([10000, 10000, 25000, 25000])
+        self.P = np.diag([1, 1, 1, 1, 1, 1])
 
         # Process noise
-        self.Q = filterpy.common.Q_continuous_white_noise(dim=4, dt=dt)
+        self.Q = filterpy.common.Q_continuous_white_noise(dim=6, dt=dt)
         # print('Possible process noise:')
         # print(Q)
 
         # State transition function
-        self.F = np.array([[1, 0, dt, 0],
-                           [0, 1, 0, dt],
-                           [0, 0, 1, 0],
-                           [0, 0, 0, 1]])
+        self.F = np.array([[0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0]])
 
         # Measurement function
         self.H = np.array([[1.0, 0.0, 0.0, 0.0],
