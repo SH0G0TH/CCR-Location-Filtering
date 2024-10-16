@@ -6,7 +6,6 @@ Based on Clyde McQueen's terrain_kf class
 """
 
 import math
-
 import filterpy
 import filterpy.common
 import filterpy.kalman
@@ -15,23 +14,47 @@ import numpy as np
 
 class GpsKF:
     startTime = 0
-    def __init__(self, startLat:float, startLong:float, dt:float):
-        # State is p (observed), p' (hidden), p'' (hidden)
-        self.x = np.array([startLat, startLong, 0.0, 0.0])
+    yawOffset = 0
+    def __init__(self, startLat:float, startLong:float, startYaw:float, dt:float):
+        # State is Latitude (observed), Longitude (observed), yaw (hidden), vx (hidden), vy(hidden), vYaw(hidden), ax(hidden), ay(hidden), aYaw(hidden)
+        self.x = np.array([startLat, startLong, startYaw, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         # Initial covariance
-        self.P = np.diag([10000, 10000, 25000, 25000])
+        self.P = np.diag([10000, 10000, .5, 5, 5, .5, 2, 2, .01])
+
 
         # Process noise
-        self.Q = filterpy.common.Q_continuous_white_noise(dim=4, dt=dt)
+        self.Q = filterpy.common.Q_continuous_white_noise(dim=9, dt=dt)
         # print('Possible process noise:')
         # print(Q)
 
         # State transition function
-        self.F = np.array([[1, 0, dt, 0],
-                           [0, 1, 0, dt],
-                           [0, 0, 1, 0],
-                           [0, 0, 0, 1]])
+        '''
+        xPos = xPos + xVel * dt
+        yPos = yPos + yVel * dt
+        
+        xVel = cos(yaw)*locXVel + sin(yaw)*locYVel
+        yVel = cos(yaw)*locYVel - sin(yaw)*loc
+        
+        Lat, Long = metersToGPS(xpos, ypos)
+        
+        SEATTLE AQUARIUM CCR OFFICE is 47.607477320727824, -122.34279024772025
+        
+        1 degree of long = 75.0522385372km
+        1 degree of lat = 111.32km
+        
+        Compared GPS against this(Mostly for fun and for ease of comparison)
+        '''
+
+        self.F = np.array([[1, 0, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 1, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0, 0, 0, 0],
+                           [0, 0, 0, 0, 0, 0, 0, 0, 0],])
 
         # Measurement function
         self.H = np.array([[1.0, 0.0, 0.0, 0.0],
@@ -70,3 +93,10 @@ class GpsKF:
         for _ in range(steps):
             x, P = filterpy.kalman.predict(x, P, self.F)
         return x, P
+
+
+    def metersToLat(self, m:float):
+        return (m/6371000.0) * 180/math.pi
+
+    def metersToLong(self, m: float):
+        return (m / 6378137) * 180 / math.pi / math.cos(self.x[0]*math.pi/180)

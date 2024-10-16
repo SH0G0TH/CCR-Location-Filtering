@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import GPSKalmanFilter
 import argparse
 
-
 #Latitude is column 23, Long is
 
 def readGPSLog(filename:str):
