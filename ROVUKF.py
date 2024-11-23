@@ -1,6 +1,7 @@
 import math
 import filterpy.common
 import filterpy.kalman
+import filterpy.stats
 from filterpy.kalman import UnscentedKalmanFilter as UKF
 import numpy as np
 import pandas
@@ -9,13 +10,18 @@ from scipy.linalg import block_diag
 
 
 def readGPSLog(filename: str):
-    return pandas.read_csv(filename, usecols=["timestamp", "GPS_INPUT.lat_deg", "GPS_INPUT.lon_deg",
-                                              "GPS_INPUT.yaw"])
-
+    GPSlog = pandas.read_csv(filename, usecols=["timestamp", "GPS_INPUT.lat_deg", "GPS_INPUT.lon_deg", "GPS_INPUT.yaw"])
+    GPSx, GPSy = latLongToPos(GPSlog['GPS_INPUT.lat_deg'],GPSlog['GPS_INPUT.lon_deg'])
+    GPSlog.insert(len(GPSlog.columns), 'xPos', GPSx)
+    GPSlog.insert(len(GPSlog.columns), 'yPos', GPSy)
+    return GPSlog
 
 def readDVLLog(filename: str):
-    return pandas.read_csv(filename, usecols=["timestamp", "VISION_POSITION_DELTA.x_delta",
-                                              "VISION_POSITION_DELTA.y_delta", "VISION_POSITION_DELTA.yaw_delta"])
+    DVLlog = pandas.read_csv(filename, usecols=["timestamp", "VISION_POSITION_DELTA.x", "VISION_POSITION_DELTA.y",
+                                                "VISION_POSITION_DELTA.z", "VISION_POSITION_DELTA.yaw",
+                                                "VISION_POSITION_DELTA.yaw_delta", "VISION_POSITION_DELTA.x_delta",
+                                                "VISION_POSITION_DELTA.y_delta", "VISION_POSITION_DELTA.z_delta"])
+    return DVLlog
 
 
 def readAttitudeFile(filename: str):
@@ -42,9 +48,9 @@ def PosToLatLong(x: float, y: float):
 
 
 def mov(x: np.array, dt):
+
     return x + np.array([dt * x[1], 0,
-                         dt * x[3], 0,
-                         (dt * x[5]) % (math.pi * 2), 0])
+                         dt * x[3], 0])
 
 
 def normalize_angle(x):# Taken from Kalman Filter textbook
@@ -75,7 +81,7 @@ def hxYaw(x, dt):
     return np.array(normalize_angle(yaw - yawVel*dt))
 
 def state_mean(sigmas, Wm):
-    x = np.zeros(6)
+    x = np.zeros(4)
     sum_sin, sum_cos = 0., 0.
     for i in range(len(sigmas)):
         s = sigmas[i]
@@ -83,10 +89,6 @@ def state_mean(sigmas, Wm):
         x[1] += s[1] * Wm[i]
         x[2] += s[2] * Wm[i]
         x[3] += s[3] * Wm[i]
-        x[5] += s[5] * Wm[i]
-        sum_sin += np.sin(s[4]) * Wm[i]
-        sum_cos += np.cos(s[4]) * Wm[i]
-    x[4] = np.atan2(sum_sin, sum_cos)
     return x
 
 def z_yaw_mean(sigmas, Wm):
@@ -97,7 +99,6 @@ def z_yaw_mean(sigmas, Wm):
         w = Wm[i]
         sum_sin+=np.sin(s)*w
         sum_cos+=np.cos(s)*w
-    print(sigmas)
     return [np.arctan2(sum_sin, sum_cos)]
 
 
@@ -118,72 +119,48 @@ def findStartYaw(GPSLog, index):
         yaw += np.pi
     return normalize_angle(yaw)
 
+def dataGate(UKF:filterpy.kalman.UnscentedKalmanFilter, position):
+    # print("Sensor = ", [position[0].item(), UKF.x[1].item(), position[1].item(), UKF.x[3].item()])
+    # print("Estimate = ", UKF.x)
+    # print(UKF.P)
+    x=np.array([position[0].item(), UKF.x[1].item(), position[1].item(), UKF.x[3].item()])
+    mean = UKF.x
+    output = filterpy.stats.mahalanobis(x=x, mean=mean, cov=UKF.P)
+    return(output)
 
-if __name__ == '__main__':
-    StateLog = []
-    GPSlog = readGPSLog("2024-06-12 10-40-01_GPS_INPUT.csv")
-    DVLlog = readDVLLog("2024-06-12 10-40-01_VISION_POSITION_DELTA.csv")
-    GPSx, GPSy = latLongToPos(GPSlog['GPS_INPUT.lat_deg'],GPSlog['GPS_INPUT.lon_deg'])
-    gpsR = np.diag([16, 16])
-    dvlR = np.diag([.0003**2, .0003**2])
-    yawR = .002**2
+def createUKF(GPSlog):
+    sigma = filterpy.kalman.MerweScaledSigmaPoints(n=4, alpha=.1, beta=2, kappa=-1)
+    ROVUKF = filterpy.kalman.UnscentedKalmanFilter(dim_x=4, dim_z=2, dt=.1, hx=hxGPS, fx=mov, points=sigma)
+    q = filterpy.common.Q_discrete_white_noise(dim=2, dt=.3, var=3 ** 2)
+    ROVUKF.Q = block_diag(q, q)
+    ROVUKF.P = np.diag([25, .5, 25, .5])
+    ROVUKF.R = np.diag([1, 1])
+    startX = np.average(GPSlog['xPos'].iloc[0:5])
+    startY = np.average(GPSlog['yPos'].iloc[0:5])
+    ROVUKF.x = [startX, 0, startY, 0]
+    return ROVUKF
 
-    GPSlog.insert(len(GPSlog.columns), 'xPos', GPSx)
-    GPSlog.insert(len(GPSlog.columns), 'yPos', GPSy)
-
-    sigma = filterpy.kalman.MerweScaledSigmaPoints(n=6, alpha=.1, beta=2, kappa=-4)
-
-    ROVUKF = filterpy.kalman.UnscentedKalmanFilter(dim_x=6, dim_z=2, dt=.1, hx=hxGPS, fx=mov, points=sigma,
-                                                   x_mean_fn=state_mean, residual_x=residual_x)
-    GPSlog2 = GPSlog[GPSlog['timestamp']>DVLlog['timestamp'][0]]
-    startX = GPSlog2.iloc[0]['xPos']
-    startY = GPSlog2.iloc[0]['yPos']
-    startYaw = findStartYaw(GPSlog, GPSlog2.index[0])
-
-    ROVUKF.x = [GPSlog2['xPos'].iloc[0], 0, GPSlog2['yPos'].iloc[0], 0, startYaw, 0]
-    # plt.plot(GPSlog['xPos'][770:1000], GPSlog['yPos'][770:1000])
-    # plt.show()
-
-    ROVUKF.P = np.diag([16, .25, 4, .25, np.pi/4, np.pi*np.pi])
-
-    q = filterpy.common.Q_discrete_white_noise(dim=2, dt=.3, var=.04**2)
-    ROVUKF.Q = block_diag(q, q, q)
-
-    log = GPSlog.merge(DVLlog, how='outer',  on='timestamp')
-
-    lastGPS = log['timestamp'][0]
-    lastDVL = log['timestamp'][0]
-    lastYaw = log['timestamp'][0]
-    last = log['timestamp'][0]
+def runUKF(GPSlog, UKF):
+    last = GPSlog['timestamp'].iloc[0]
     estPos = []
-    for index, row in log.iterrows():
-        dt=row['timestamp'] - last
-        ROVUKF.predict(dt=dt)
+    for index, row in Deeplog.iterrows():
+        dt = row['timestamp'] - last
+        UKF.predict(dt=dt)
         estPos.append([ROVUKF.x[0], ROVUKF.x[2]])
         last = row['timestamp']
+        UKF.update(z=[row['GPS_INPUT.lat_deg'], row['GPS_INPUT.lon_deg']])
+    return estPos
 
-        if np.isnan(row['xPos']):
-            if row['VISION_POSITION_DELTA.yaw_delta']!=0:
-                print('YAW')
-                ROVUKF.residual_z = residual_z
-                ROVUKF.z_mean = z_yaw_mean
-                ROVUKF.update(z=row['VISION_POSITION_DELTA.yaw_delta'], hx=hxYaw, R=.002**2, dt=dt)
-                ROVUKF.residual_z=None
-                ROVUKF.z_mean=None
-                lastYaw = row['timestamp']
-            print('DVL')
-            ROVUKF.update(z=[row['VISION_POSITION_DELTA.x_delta'],
-                             row['VISION_POSITION_DELTA.y_delta']], hx=hxDVL, R=dvlR, dt=dt)
-            lastDVL = row['timestamp']
-        else:
-            print('GPS')
-            ROVUKF.update(z=[row['xPos'], row['yPos']], hx=hxGPS, R=gpsR)
-            lastGPS = row['timestamp']
+if __name__ == '__main__':
 
-    estPos = np.array(estPos)
-    plt.scatter(x=estPos[:, 0], y=estPos[:, 1])
+    Deeplog = readGPSLog("2024-10-08_Deep1_GPS_INPUT.csv")
+    ROVUKF = createUKF(Deeplog)
+    estPos = np.array(runUKF(Deeplog,ROVUKF))
+    print(estPos)
+
+    plt.plot(Deeplog['xPos'],Deeplog['yPos'])
+    plt.plot(estPos[:,0],estPos[:,1])
     plt.show()
-
 
 
 
