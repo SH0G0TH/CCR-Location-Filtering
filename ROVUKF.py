@@ -23,6 +23,8 @@ def readDVLLog(filename: str):
                                                 "VISION_POSITION_DELTA.y_delta", "VISION_POSITION_DELTA.z_delta"])
     return DVLlog
 
+def combineLog(DVL, GPS):
+    return pandas.merge(DVL, GPS, how="outer", on="timestamp")
 
 def readAttitudeFile(filename: str):
     return pandas.read_csv(filename, usecols=["timestamp", "ATTITUDE.yaw", "ATTITUDE.yawspeed"])
@@ -143,24 +145,31 @@ def createUKF(GPSlog):
 def runUKF(GPSlog, UKF):
     last = GPSlog['timestamp'].iloc[0]
     estPos = []
-    for index, row in Deeplog.iterrows():
+    for index, row in GPSlog.iterrows():
         dt = row['timestamp'] - last
         UKF.predict(dt=dt)
-        estPos.append([ROVUKF.x[0], ROVUKF.x[2]])
+        estPos.append([UKF.x[0], UKF.x[2]])
         last = row['timestamp']
         UKF.update(z=[row['GPS_INPUT.lat_deg'], row['GPS_INPUT.lon_deg']])
     return estPos
 
 if __name__ == '__main__':
 
-    Deeplog = readGPSLog("2024-10-08_Deep1_GPS_INPUT.csv")
-    ROVUKF = createUKF(Deeplog)
-    estPos = np.array(runUKF(Deeplog,ROVUKF))
-    print(estPos)
+    deeplog = readGPSLog("2024-10-08_Deep1_GPS_INPUT.csv")
+    deepDVL = readDVLLog("2024-10-08_Deep1_VISION_POSITION_DELTA.csv")
+    comboLog = combineLog(deepDVL, deeplog)
+    pandas.set_option('display.max_columns', 500)
+    print(comboLog["VISION_POSITION_DELTA.yaw_delta"][0:10])
 
-    plt.plot(Deeplog['xPos'],Deeplog['yPos'])
-    plt.plot(estPos[:,0],estPos[:,1])
-    plt.show()
+   # ROVUKF = createUKF(deeplog)
+
+
+    # estPos = np.array(runUKF(Deeplog,ROVUKF))
+    # print(estPos)
+    #
+    # plt.plot(Deeplog['xPos'],Deeplog['yPos'])
+    # plt.plot(estPos[:,0],estPos[:,1])
+    # plt.show()
 
 
 
